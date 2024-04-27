@@ -190,10 +190,10 @@ pipeline {
 	            setBuildStatus("Build failed", "FAILURE");
 	            if (getCurrentBranch() == 'main') {
 	                sh "sudo umount -l ${BASE_PATH}/merged"
-	                sh "sudo rm -rf ${SHARED_WORKSPACE_PATH}"
+	                //sh "sudo rm -rf ${SHARED_WORKSPACE_PATH}"
 	            } else {
 	                sh "sudo umount -l ${BASE_PATH}/merged"
-	                sh "sudo rm -rf ${BASE_PATH}/upper ${BASE_PATH}/work"
+	                //sh "sudo rm -rf ${BASE_PATH}/upper ${BASE_PATH}/work"
 	            }
 	        }
 	    }

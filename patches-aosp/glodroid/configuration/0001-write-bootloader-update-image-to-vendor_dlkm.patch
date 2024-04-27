@@ -1,0 +1,46 @@
+From 862f30de8e037dae675178c249acacf293c05328 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Micha=C5=82=20Gapi=C5=84ski?= <mike@gapinski.eu>
+Date: Wed, 1 May 2024 17:07:32 +0000
+Subject: [PATCH] write bootloader-update image to vendor_dlkm
+
+---
+ platform/kernel/kernel.mk |  1 +
+ platform/uboot/uboot.mk   | 11 +++++++++++
+ 2 files changed, 12 insertions(+)
+
+diff --git a/platform/kernel/kernel.mk b/platform/kernel/kernel.mk
+index d49b729..f10e822 100644
+--- a/platform/kernel/kernel.mk
++++ b/platform/kernel/kernel.mk
+@@ -75,6 +75,7 @@ $(TARGET_VENDOR_MODULES)/modules.dep: $(KERNEL_TARGET)
+ 	mkdir -p $(TARGET_VENDOR_MODULES)/kernel
+ 	cp -r $(KERNEL_OUT)/install/modules/lib/modules/GloDroid/kernel/* $(TARGET_VENDOR_MODULES)/kernel/
+ 	cp -r $(KERNEL_OUT)/install/modules/lib/modules/GloDroid/modules.* $(TARGET_VENDOR_MODULES)/
++	cp -r $(PRODUCT_OUT)/bootloader-sd.img $(TARGET_OUT_VENDOR_DLKM)/bootloader-update.img
+ 	touch $@
+ 
+ $(PRODUCT_OUT)/kernel: $(KERNEL_TARGET) $(TARGET_VENDOR_MODULES)/modules.dep
+diff --git a/platform/uboot/uboot.mk b/platform/uboot/uboot.mk
+index 090cfb5..48c8786 100644
+--- a/platform/uboot/uboot.mk
++++ b/platform/uboot/uboot.mk
+@@ -206,6 +206,17 @@ BOOT_FILES := \
+ 
+ OVERLAY_FILES := $(sort $(shell find -L $(RPI_FIRMWARE_DIR)/boot/overlays))
+ 
++$(TARGET_OUT_VENDOR_DLKM)/bootloader-update.img: $(UBOOT_BINARY) $(OVERLAY_FILES) $(ATF_BINARY) $(RPI_CONFIG) $(KERNEL_TARGET) $(UBOOT_OUT)/boot.scr
++	dd if=/dev/null of=$@ bs=1 count=1 seek=$$(( 128 * 1024 * 1024 - 256 * 512 ))
++	/sbin/mkfs.vfat -F 32 -n boot $@
++	/usr/bin/mcopy -i $@ $(UBOOT_BINARY) ::$(notdir $(UBOOT_BINARY))
++	/usr/bin/mcopy -i $@ $(ATF_BINARY) ::$(notdir $(ATF_BINARY))
++	/usr/bin/mcopy -i $@ $(RPI_CONFIG) ::$(notdir $(RPI_CONFIG))
++	/usr/bin/mcopy -i $@ $(BOOT_FILES) ::
++	/usr/bin/mmd -i $@ ::overlays
++	/usr/bin/mcopy -i $@ $(OVERLAY_FILES) ::overlays/
++	/usr/bin/mcopy -i $@ $(UBOOT_OUT)/boot.scr ::$(notdir $(UBOOT_OUT)/boot.scr)
++
+ $(PRODUCT_OUT)/bootloader-sd.img: $(UBOOT_BINARY) $(OVERLAY_FILES) $(ATF_BINARY) $(RPI_CONFIG) $(KERNEL_TARGET) $(UBOOT_OUT)/boot.scr
+ 	dd if=/dev/null of=$@ bs=1 count=1 seek=$$(( 128 * 1024 * 1024 - 256 * 512 ))
+ 	/sbin/mkfs.vfat -F 32 -n boot $@
+-- 
+2.34.1
