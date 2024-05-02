@@ -1,22 +1,39 @@
-From 862f30de8e037dae675178c249acacf293c05328 Mon Sep 17 00:00:00 2001
+From 6d8850536395b4383f59affaa2c72c6ae4500f41 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Micha=C5=82=20Gapi=C5=84ski?= <mike@gapinski.eu>
 Date: Wed, 1 May 2024 17:07:32 +0000
-Subject: [PATCH] write bootloader-update image to vendor_dlkm
+Subject: [PATCH 1/1] write bootloader-update image to vendor_dlkm
 
 ---
- platform/kernel/kernel.mk |  1 +
+ platform/kernel/kernel.mk | 12 ++++++++++++
  platform/uboot/uboot.mk   | 11 +++++++++++
- 2 files changed, 12 insertions(+)
+ 2 files changed, 23 insertions(+)
 
 diff --git a/platform/kernel/kernel.mk b/platform/kernel/kernel.mk
-index d49b729..f10e822 100644
+index d49b729..30df3bd 100644
 --- a/platform/kernel/kernel.mk
 +++ b/platform/kernel/kernel.mk
-@@ -75,6 +75,7 @@ $(TARGET_VENDOR_MODULES)/modules.dep: $(KERNEL_TARGET)
+@@ -69,12 +69,24 @@ BOARD_PREBUILT_DTBOIMAGE := $(PRODUCT_OUT)/boot_dtbo.img
+ MKDTBOIMG		:= $(HOST_OUT_EXECUTABLES)/mkdtboimg
+ GEN_DTBCFG		:= $(PRODUCT_OUT)/gen/DTBO/dtbo.cfg
+ 
++RPI_FIRMWARE_DIR := glodroid/bootloader/raspberry-fw
++DTBS_DIR      := $(KERNEL_OUT)/install/dtbs
++
+ $(TARGET_VENDOR_MODULES)/modules.dep: $(KERNEL_TARGET)
+ 	rm -rf $(TARGET_VENDOR_MODULES)/kernel
+ 	rm -f $(TARGET_VENDOR_MODULES)/modules.*
  	mkdir -p $(TARGET_VENDOR_MODULES)/kernel
  	cp -r $(KERNEL_OUT)/install/modules/lib/modules/GloDroid/kernel/* $(TARGET_VENDOR_MODULES)/kernel/
  	cp -r $(KERNEL_OUT)/install/modules/lib/modules/GloDroid/modules.* $(TARGET_VENDOR_MODULES)/
-+	cp -r $(PRODUCT_OUT)/bootloader-sd.img $(TARGET_OUT_VENDOR_DLKM)/bootloader-update.img
++	mkdir -p $(TARGET_OUT_VENDOR_DLKM)/boot
++	cp -r $(RPI_FIRMWARE_DIR)/boot/bootcode.bin $(TARGET_OUT_VENDOR_DLKM)/boot/bootcode.bin
++	cp -r $(RPI_FIRMWARE_DIR)/boot/start_x.elf $(TARGET_OUT_VENDOR_DLKM)/boot/start_x.elf
++	cp -r $(RPI_FIRMWARE_DIR)/boot/start4x.elf $(TARGET_OUT_VENDOR_DLKM)/boot/start4x.elf
++	cp -r $(RPI_FIRMWARE_DIR)/boot/fixup_x.dat $(TARGET_OUT_VENDOR_DLKM)/boot/fixup_x.dat
++	cp -r $(RPI_FIRMWARE_DIR)/boot/fixup4x.dat $(TARGET_OUT_VENDOR_DLKM)/boot/fixup4x.dat
++	cp -r $(DTBS_DIR)/broadcom/bcm2711-rpi-4-b.dtb $(TARGET_OUT_VENDOR_DLKM)/boot/bcm2711-rpi-4-b.dtb
++	cp -r $(DTBS_DIR)/broadcom/bcm2711-rpi-400.dtb $(TARGET_OUT_VENDOR_DLKM)/boot/bcm2711-rpi-400.dtb
++	cp -r $(DTBS_DIR)/broadcom/bcm2711-rpi-cm4.dtb $(TARGET_OUT_VENDOR_DLKM)/boot/bcm2711-rpi-cm4.dtb
  	touch $@
  
  $(PRODUCT_OUT)/kernel: $(KERNEL_TARGET) $(TARGET_VENDOR_MODULES)/modules.dep
@@ -44,3 +61,4 @@ index 090cfb5..48c8786 100644
  	/sbin/mkfs.vfat -F 32 -n boot $@
 -- 
 2.34.1
+
