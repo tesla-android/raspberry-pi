@@ -1,0 +1,1166 @@
+From c8e5139d0d14009d4c7dab1ce412ea61df56796d Mon Sep 17 00:00:00 2001
+From: Roman Stratiienko <r.stratiienko@gmail.com>
+Date: Tue, 5 Dec 2023 20:13:04 +0200
+Subject: [PATCH 3/6] Revert "Revert "Turn on vk unit tests""
+
+This reverts commit d290c36e6e30a2be150605cf8437d36e095e1ab7.
+
+With this commit, the following assertion is triggered:
+Abort message: 'Assertion failed: queueProps[i].queueCount < kRequestedQueueCount'
+
+Change-Id: I0318daee095ddeaf8445d7b7c5cce541e3def9f1
+Signed-off-by: Roman Stratiienko <r.stratiienko@gmail.com>
+---
+ libs/hwui/Properties.cpp                    |  14 +-
+ libs/hwui/Properties.cpp.orig               | 268 ++++++++++++++
+ libs/hwui/Properties.h                      |   2 +-
+ libs/hwui/Properties.h.orig                 | 380 ++++++++++++++++++++
+ libs/hwui/renderthread/VulkanManager.cpp    |  48 ++-
+ libs/hwui/renderthread/VulkanManager.h      |  23 +-
+ libs/hwui/renderthread/VulkanManager.h.orig | 220 ++++++++++++
+ libs/hwui/tests/common/TestUtils.h          |   3 +-
+ 8 files changed, 919 insertions(+), 39 deletions(-)
+ create mode 100644 libs/hwui/Properties.cpp.orig
+ create mode 100644 libs/hwui/Properties.h.orig
+ create mode 100644 libs/hwui/renderthread/VulkanManager.h.orig
+
+diff --git a/libs/hwui/Properties.cpp b/libs/hwui/Properties.cpp
+index d58c872dbc56..ba5f5eb718b5 100644
+--- a/libs/hwui/Properties.cpp
++++ b/libs/hwui/Properties.cpp
+@@ -17,6 +17,7 @@
+ #include "Properties.h"
+ 
+ #include "Debug.h"
++#include "log/log_main.h"
+ #ifdef __ANDROID__
+ #include "HWUIProperties.sysprop.h"
+ #endif
+@@ -238,15 +239,12 @@ RenderPipelineType Properties::getRenderPipelineType() {
+     return sRenderPipelineType;
+ }
+ 
+-void Properties::overrideRenderPipelineType(RenderPipelineType type) {
++void Properties::overrideRenderPipelineType(RenderPipelineType type, bool inUnitTest) {
+     // If we're doing actual rendering then we can't change the renderer after it's been set.
+-    // Unit tests can freely change this as often as it wants, though, as there's no actual
+-    // GL rendering happening
+-    if (sRenderPipelineType != RenderPipelineType::NotInitialized) {
+-        LOG_ALWAYS_FATAL_IF(sRenderPipelineType != type,
+-                            "Trying to change pipeline but it's already set");
+-        return;
+-    }
++    // Unit tests can freely change this as often as it wants.
++    LOG_ALWAYS_FATAL_IF(sRenderPipelineType != RenderPipelineType::NotInitialized &&
++                                sRenderPipelineType != type && !inUnitTest,
++                        "Trying to change pipeline but it's already set.");
+     sRenderPipelineType = type;
+ }
+ 
+diff --git a/libs/hwui/Properties.cpp.orig b/libs/hwui/Properties.cpp.orig
+new file mode 100644
+index 000000000000..d58c872dbc56
+--- /dev/null
++++ b/libs/hwui/Properties.cpp.orig
+@@ -0,0 +1,268 @@
++/*
++ * Copyright (C) 2015 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#include "Properties.h"
++
++#include "Debug.h"
++#ifdef __ANDROID__
++#include "HWUIProperties.sysprop.h"
++#endif
++#include <android-base/properties.h>
++#include <cutils/compiler.h>
++#include <log/log.h>
++
++#include <algorithm>
++#include <cstdlib>
++#include <optional>
++
++#include "src/core/SkTraceEventCommon.h"
++
++#ifdef __ANDROID__
++#include <com_android_graphics_hwui_flags.h>
++namespace hwui_flags = com::android::graphics::hwui::flags;
++#else
++namespace hwui_flags {
++constexpr bool clip_surfaceviews() {
++    return false;
++}
++}  // namespace hwui_flags
++#endif
++
++namespace android {
++namespace uirenderer {
++
++#ifndef __ANDROID__ // Layoutlib does not compile HWUIProperties.sysprop as it depends on cutils properties
++std::optional<bool> use_vulkan() {
++    return base::GetBoolProperty("ro.hwui.use_vulkan", true);
++}
++
++std::optional<std::int32_t> render_ahead() {
++    return base::GetIntProperty("ro.hwui.render_ahead", 0);
++}
++#endif
++
++bool Properties::debugLayersUpdates = false;
++bool Properties::debugOverdraw = false;
++bool Properties::debugTraceGpuResourceCategories = false;
++bool Properties::showDirtyRegions = false;
++bool Properties::skipEmptyFrames = true;
++bool Properties::useBufferAge = true;
++bool Properties::enablePartialUpdates = true;
++// Default true unless otherwise specified in RenderThread Configuration
++bool Properties::enableRenderEffectCache = true;
++
++DebugLevel Properties::debugLevel = kDebugDisabled;
++OverdrawColorSet Properties::overdrawColorSet = OverdrawColorSet::Default;
++
++float Properties::overrideLightRadius = -1.0f;
++float Properties::overrideLightPosY = -1.0f;
++float Properties::overrideLightPosZ = -1.0f;
++float Properties::overrideAmbientRatio = -1.0f;
++int Properties::overrideAmbientShadowStrength = -1;
++int Properties::overrideSpotShadowStrength = -1;
++
++ProfileType Properties::sProfileType = ProfileType::None;
++bool Properties::sDisableProfileBars = false;
++RenderPipelineType Properties::sRenderPipelineType = RenderPipelineType::NotInitialized;
++bool Properties::enableHighContrastText = false;
++
++bool Properties::waitForGpuCompletion = false;
++
++bool Properties::filterOutTestOverhead = false;
++bool Properties::disableVsync = false;
++bool Properties::skpCaptureEnabled = false;
++bool Properties::enableRTAnimations = true;
++
++bool Properties::runningInEmulator = false;
++bool Properties::debuggingEnabled = false;
++bool Properties::isolatedProcess = false;
++
++int Properties::contextPriority = 0;
++float Properties::defaultSdrWhitePoint = 200.f;
++
++bool Properties::useHintManager = false;
++int Properties::targetCpuTimePercentage = 70;
++
++bool Properties::enableWebViewOverlays = true;
++
++bool Properties::isHighEndGfx = true;
++bool Properties::isLowRam = false;
++bool Properties::isSystemOrPersistent = false;
++
++float Properties::maxHdrHeadroomOn8bit = 5.f;  // TODO: Refine this number
++
++bool Properties::clipSurfaceViews = false;
++
++StretchEffectBehavior Properties::stretchEffectBehavior = StretchEffectBehavior::ShaderHWUI;
++
++DrawingEnabled Properties::drawingEnabled = DrawingEnabled::NotInitialized;
++
++bool Properties::load() {
++    bool prevDebugLayersUpdates = debugLayersUpdates;
++    bool prevDebugOverdraw = debugOverdraw;
++
++    debugOverdraw = false;
++    std::string debugOverdrawProperty = base::GetProperty(PROPERTY_DEBUG_OVERDRAW, "");
++    if (debugOverdrawProperty != "") {
++        INIT_LOGD("  Overdraw debug enabled: %s", debugOverdrawProperty.c_str());
++        if (debugOverdrawProperty == "show") {
++            debugOverdraw = true;
++            overdrawColorSet = OverdrawColorSet::Default;
++        } else if (debugOverdrawProperty == "show_deuteranomaly") {
++            debugOverdraw = true;
++            overdrawColorSet = OverdrawColorSet::Deuteranomaly;
++        }
++    }
++
++    sProfileType = ProfileType::None;
++    std::string profileProperty = base::GetProperty(PROPERTY_PROFILE, "");
++    if (profileProperty != "") {
++        if (profileProperty == PROPERTY_PROFILE_VISUALIZE_BARS) {
++            sProfileType = ProfileType::Bars;
++        } else if (profileProperty == "true") {
++            sProfileType = ProfileType::Console;
++        }
++    }
++
++    debugLayersUpdates = base::GetBoolProperty(PROPERTY_DEBUG_LAYERS_UPDATES, false);
++    INIT_LOGD("  Layers updates debug enabled: %d", debugLayersUpdates);
++
++    showDirtyRegions = base::GetBoolProperty(PROPERTY_DEBUG_SHOW_DIRTY_REGIONS, false);
++
++    debugLevel = (DebugLevel)base::GetIntProperty(PROPERTY_DEBUG, (int)kDebugDisabled);
++
++    skipEmptyFrames = base::GetBoolProperty(PROPERTY_SKIP_EMPTY_DAMAGE, true);
++    useBufferAge = base::GetBoolProperty(PROPERTY_USE_BUFFER_AGE, true);
++    enablePartialUpdates = base::GetBoolProperty(PROPERTY_ENABLE_PARTIAL_UPDATES, true);
++
++    filterOutTestOverhead = base::GetBoolProperty(PROPERTY_FILTER_TEST_OVERHEAD, false);
++
++    skpCaptureEnabled = debuggingEnabled && base::GetBoolProperty(PROPERTY_CAPTURE_SKP_ENABLED, false);
++
++    bool skiaBroadTracing = base::GetBoolProperty(PROPERTY_SKIA_TRACING_ENABLED, false);
++    SkAndroidFrameworkTraceUtil::setEnableTracing(skiaBroadTracing);
++    SkAndroidFrameworkTraceUtil::setUsePerfettoTrackEvents(
++            base::GetBoolProperty(PROPERTY_SKIA_USE_PERFETTO_TRACK_EVENTS, false));
++    debugTraceGpuResourceCategories =
++            base::GetBoolProperty(PROPERTY_TRACE_GPU_RESOURCES, skiaBroadTracing);
++
++    runningInEmulator = base::GetBoolProperty(PROPERTY_IS_EMULATOR, false);
++
++    useHintManager = base::GetBoolProperty(PROPERTY_USE_HINT_MANAGER, false);
++    targetCpuTimePercentage = base::GetIntProperty(PROPERTY_TARGET_CPU_TIME_PERCENTAGE, 70);
++    if (targetCpuTimePercentage <= 0 || targetCpuTimePercentage > 100) targetCpuTimePercentage = 70;
++
++    enableWebViewOverlays = base::GetBoolProperty(PROPERTY_WEBVIEW_OVERLAYS_ENABLED, true);
++
++    auto hdrHeadroom = (float)atof(base::GetProperty(PROPERTY_8BIT_HDR_HEADROOM, "").c_str());
++    if (hdrHeadroom >= 1.f) {
++        maxHdrHeadroomOn8bit = std::min(hdrHeadroom, 100.f);
++    }
++
++    // call isDrawingEnabled to force loading of the property
++    isDrawingEnabled();
++
++    clipSurfaceViews =
++            base::GetBoolProperty("debug.hwui.clip_surfaceviews", hwui_flags::clip_surfaceviews());
++
++    return (prevDebugLayersUpdates != debugLayersUpdates) || (prevDebugOverdraw != debugOverdraw);
++}
++
++void Properties::overrideProperty(const char* name, const char* value) {
++    if (!strcmp(name, "disableProfileBars")) {
++        sDisableProfileBars = !strcmp(value, "true");
++        ALOGD("profile bars %s", sDisableProfileBars ? "disabled" : "enabled");
++        return;
++    } else if (!strcmp(name, "ambientRatio")) {
++        overrideAmbientRatio = std::min(std::max(atof(value), 0.0), 10.0);
++        ALOGD("ambientRatio = %.2f", overrideAmbientRatio);
++        return;
++    } else if (!strcmp(name, "lightRadius")) {
++        overrideLightRadius = std::min(std::max(atof(value), 0.0), 3000.0);
++        ALOGD("lightRadius = %.2f", overrideLightRadius);
++        return;
++    } else if (!strcmp(name, "lightPosY")) {
++        overrideLightPosY = std::min(std::max(atof(value), 0.0), 3000.0);
++        ALOGD("lightPos Y = %.2f", overrideLightPosY);
++        return;
++    } else if (!strcmp(name, "lightPosZ")) {
++        overrideLightPosZ = std::min(std::max(atof(value), 0.0), 3000.0);
++        ALOGD("lightPos Z = %.2f", overrideLightPosZ);
++        return;
++    } else if (!strcmp(name, "ambientShadowStrength")) {
++        overrideAmbientShadowStrength = atoi(value);
++        ALOGD("ambient shadow strength = 0x%x out of 0xff", overrideAmbientShadowStrength);
++        return;
++    } else if (!strcmp(name, "spotShadowStrength")) {
++        overrideSpotShadowStrength = atoi(value);
++        ALOGD("spot shadow strength = 0x%x out of 0xff", overrideSpotShadowStrength);
++        return;
++    }
++    ALOGD("failed overriding property %s to %s", name, value);
++}
++
++ProfileType Properties::getProfileType() {
++    if (CC_UNLIKELY(sDisableProfileBars && sProfileType == ProfileType::Bars))
++        return ProfileType::None;
++    return sProfileType;
++}
++
++RenderPipelineType Properties::peekRenderPipelineType() {
++    // If sRenderPipelineType has been locked, just return the locked type immediately.
++    if (sRenderPipelineType != RenderPipelineType::NotInitialized) {
++        return sRenderPipelineType;
++    }
++    bool useVulkan = use_vulkan().value_or(false);
++    std::string rendererProperty = base::GetProperty(PROPERTY_RENDERER, useVulkan ? "skiavk" : "skiagl");
++    if (rendererProperty == "skiavk") {
++        return RenderPipelineType::SkiaVulkan;
++    }
++    return RenderPipelineType::SkiaGL;
++}
++
++RenderPipelineType Properties::getRenderPipelineType() {
++    sRenderPipelineType = peekRenderPipelineType();
++    return sRenderPipelineType;
++}
++
++void Properties::overrideRenderPipelineType(RenderPipelineType type) {
++    // If we're doing actual rendering then we can't change the renderer after it's been set.
++    // Unit tests can freely change this as often as it wants, though, as there's no actual
++    // GL rendering happening
++    if (sRenderPipelineType != RenderPipelineType::NotInitialized) {
++        LOG_ALWAYS_FATAL_IF(sRenderPipelineType != type,
++                            "Trying to change pipeline but it's already set");
++        return;
++    }
++    sRenderPipelineType = type;
++}
++
++void Properties::setDrawingEnabled(bool newDrawingEnabled) {
++    drawingEnabled = newDrawingEnabled ? DrawingEnabled::On : DrawingEnabled::Off;
++    enableRTAnimations = newDrawingEnabled;
++}
++
++bool Properties::isDrawingEnabled() {
++    if (drawingEnabled == DrawingEnabled::NotInitialized) {
++        bool drawingEnabledProp = base::GetBoolProperty(PROPERTY_DRAWING_ENABLED, true);
++        drawingEnabled = drawingEnabledProp ? DrawingEnabled::On : DrawingEnabled::Off;
++        enableRTAnimations = drawingEnabledProp;
++    }
++    return drawingEnabled == DrawingEnabled::On;
++}
++
++}  // namespace uirenderer
++}  // namespace android
+diff --git a/libs/hwui/Properties.h b/libs/hwui/Properties.h
+index b956facf6f90..2b484dd77426 100644
+--- a/libs/hwui/Properties.h
++++ b/libs/hwui/Properties.h
+@@ -313,7 +313,7 @@ public:
+     static bool enableRTAnimations;
+ 
+     // Used for testing only to change the render pipeline.
+-    static void overrideRenderPipelineType(RenderPipelineType);
++    static void overrideRenderPipelineType(RenderPipelineType, bool inUnitTest = false);
+ 
+     static bool runningInEmulator;
+ 
+diff --git a/libs/hwui/Properties.h.orig b/libs/hwui/Properties.h.orig
+new file mode 100644
+index 000000000000..b956facf6f90
+--- /dev/null
++++ b/libs/hwui/Properties.h.orig
+@@ -0,0 +1,380 @@
++/*
++ * Copyright (C) 2010 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#ifndef ANDROID_HWUI_PROPERTIES_H
++#define ANDROID_HWUI_PROPERTIES_H
++
++#include <cutils/compiler.h>
++
++/**
++ * This file contains the list of system properties used to configure libhwui.
++ */
++
++namespace android {
++namespace uirenderer {
++
++///////////////////////////////////////////////////////////////////////////////
++// Compile-time properties
++///////////////////////////////////////////////////////////////////////////////
++
++// Textures used by layers must have dimensions multiples of this number
++#define LAYER_SIZE 64
++
++// Defines the size in bits of the stencil buffer for the framebuffer
++// Note: Only 1 bit is required for clipping but more bits are required
++// to properly implement overdraw debugging
++#define STENCIL_BUFFER_SIZE 8
++
++///////////////////////////////////////////////////////////////////////////////
++// Debug properties
++///////////////////////////////////////////////////////////////////////////////
++
++/**
++ * Debug level for app developers. The value is a numeric value defined
++ * by the DebugLevel enum below.
++ */
++#define PROPERTY_DEBUG "debug.hwui.level"
++
++/**
++ * Debug levels. Debug levels are used as flags.
++ */
++enum DebugLevel {
++    kDebugDisabled = 0,
++    kDebugMemory = 1,
++    kDebugCaches = 2,
++    kDebugMoreCaches = kDebugMemory | kDebugCaches
++};
++
++/**
++ * Used to enable/disable layers update debugging. The accepted values are
++ * "true" and "false". The default value is "false".
++ */
++#define PROPERTY_DEBUG_LAYERS_UPDATES "debug.hwui.show_layers_updates"
++
++/**
++ * Used to enable/disable overdraw debugging.
++ *
++ * The accepted values are
++ * "show", to show overdraw
++ * "show_deuteranomaly", to show overdraw if you suffer from Deuteranomaly
++ * "count", to show an overdraw counter
++ * "false", to disable overdraw debugging
++ *
++ * The default value is "false".
++ */
++#define PROPERTY_DEBUG_OVERDRAW "debug.hwui.overdraw"
++
++/**
++ *  System property used to enable or disable hardware rendering profiling.
++ * The default value of this property is assumed to be false.
++ *
++ * When profiling is enabled, the adb shell dumpsys gfxinfo command will
++ * output extra information about the time taken to execute by the last
++ * frames.
++ *
++ * Possible values:
++ * "true", to enable profiling
++ * "visual_bars", to enable profiling and visualize the results on screen
++ * "false", to disable profiling
++ */
++#define PROPERTY_PROFILE "debug.hwui.profile"
++#define PROPERTY_PROFILE_VISUALIZE_BARS "visual_bars"
++
++/**
++ * Turn on to draw dirty regions every other frame.
++ *
++ * Possible values:
++ * "true", to enable dirty regions debugging
++ * "false", to disable dirty regions debugging
++ */
++#define PROPERTY_DEBUG_SHOW_DIRTY_REGIONS "debug.hwui.show_dirty_regions"
++
++/**
++ * Setting this property will enable or disable the dropping of frames with
++ * empty damage. Default is "true".
++ */
++#define PROPERTY_SKIP_EMPTY_DAMAGE "debug.hwui.skip_empty_damage"
++
++/**
++ * Controls whether or not HWUI will use the EGL_EXT_buffer_age extension
++ * to do partial invalidates. Setting this to "false" will fall back to
++ * using BUFFER_PRESERVED instead
++ * Default is "true"
++ */
++#define PROPERTY_USE_BUFFER_AGE "debug.hwui.use_buffer_age"
++
++/**
++ * Setting this to "false" will force HWUI to always do full-redraws of the surface.
++ * This will disable the use of EGL_EXT_buffer_age and BUFFER_PRESERVED.
++ * Default is "true"
++ */
++#define PROPERTY_ENABLE_PARTIAL_UPDATES "debug.hwui.use_partial_updates"
++
++#define PROPERTY_FILTER_TEST_OVERHEAD "debug.hwui.filter_test_overhead"
++
++/**
++ * Indicates whether PBOs can be used to back pixel buffers.
++ * Accepted values are "true" and "false". Default is true.
++ */
++#define PROPERTY_ENABLE_GPU_PIXEL_BUFFERS "debug.hwui.use_gpu_pixel_buffers"
++
++/**
++ * Allows to set rendering pipeline mode to OpenGL (default), Skia OpenGL
++ * or Vulkan.
++ */
++#define PROPERTY_RENDERER "debug.hwui.renderer"
++
++/**
++ * Allows to collect a recording of Skia drawing commands.
++ */
++#define PROPERTY_CAPTURE_SKP_ENABLED "debug.hwui.capture_skp_enabled"
++
++/**
++ * Might split Skia's GPU resource utilization into separate tracing tracks (slow).
++ *
++ * Aggregate total and purgeable numbers will still be reported under a "misc" track when this is
++ * disabled, they just won't be split into distinct categories. Results may vary depending on GPU
++ * backend/API, and the category mappings defined in ATraceMemoryDump's hardcoded sResourceMap.
++ */
++#define PROPERTY_TRACE_GPU_RESOURCES "debug.hwui.trace_gpu_resources"
++
++/**
++ * Allows broad recording of Skia drawing commands.
++ *
++ * If disabled, a very minimal set of trace events *may* be recorded.
++ * If enabled, a much broader set of trace events *may* be recorded.
++ *
++ * In either case, trace events are only recorded if an appropriately configured tracing session is
++ * active.
++ *
++ * Use debug.hwui.skia_use_perfetto_track_events to determine if ATrace (default) or Perfetto is
++ * used as the tracing backend.
++ */
++#define PROPERTY_SKIA_TRACING_ENABLED "debug.hwui.skia_tracing_enabled"
++
++/**
++ * Switches Skia's tracing to use Perfetto's Track Event system instead of ATrace.
++ *
++ * If disabled, ATrace will be used by default, which will record trace events from any of Skia's
++ * tracing categories if overall system tracing is active and the "gfx" and "view" ATrace categories
++ * are enabled.
++ *
++ * If enabled, then Perfetto's Track Event system will be used instead, which will only record if an
++ * active Perfetto tracing session is targeting the correct apps and Skia tracing categories with
++ * the Track Event data source enabled. This approach may be used to selectively filter out
++ * undesired Skia tracing categories, and events will contain more data fields.
++ */
++#define PROPERTY_SKIA_USE_PERFETTO_TRACK_EVENTS "debug.hwui.skia_use_perfetto_track_events"
++
++/**
++ * Defines how many frames in a sequence to capture.
++ */
++#define PROPERTY_CAPTURE_SKP_FRAMES "debug.hwui.capture_skp_frames"
++
++/**
++ * File name and location, where a SKP recording will be saved.
++ */
++#define PROPERTY_CAPTURE_SKP_FILENAME "debug.hwui.skp_filename"
++
++/**
++ * Controls whether HWUI will send timing hints to HintManager for
++ * better CPU scheduling. Accepted values are "true" and "false".
++ */
++#define PROPERTY_USE_HINT_MANAGER "debug.hwui.use_hint_manager"
++
++/**
++ * Percentage of frame time that's used for CPU work. The rest is
++ * reserved for GPU work. This is used with use_hint_manager to
++ * provide timing hints to HintManager. Accepted values are
++ * integer from 1-100.
++ */
++#define PROPERTY_TARGET_CPU_TIME_PERCENTAGE "debug.hwui.target_cpu_time_percent"
++
++/**
++ * Property for whether this is running in the emulator.
++ */
++#define PROPERTY_IS_EMULATOR "ro.boot.qemu"
++
++/**
++ * Turns on the Skia GPU option "reduceOpsTaskSplitting" which improves GPU
++ * efficiency but may increase VRAM consumption. Default is "true".
++ */
++#define PROPERTY_REDUCE_OPS_TASK_SPLITTING "renderthread.skia.reduceopstasksplitting"
++
++/**
++ * Enable WebView Overlays feature.
++ */
++#define PROPERTY_WEBVIEW_OVERLAYS_ENABLED "debug.hwui.webview_overlays_enabled"
++
++/**
++ * Property for globally GL drawing state. Can be overridden per process with
++ * setDrawingEnabled.
++ */
++#define PROPERTY_DRAWING_ENABLED "debug.hwui.drawing_enabled"
++
++#define PROPERTY_MEMORY_POLICY "debug.hwui.app_memory_policy"
++
++#define PROPERTY_8BIT_HDR_HEADROOM "debug.hwui.8bit_hdr_headroom"
++
++///////////////////////////////////////////////////////////////////////////////
++// Misc
++///////////////////////////////////////////////////////////////////////////////
++
++// Converts a number of mega-bytes into bytes
++#define MB(s) ((s)*1024 * 1024)
++// Converts a number of kilo-bytes into bytes
++#define KB(s) ((s)*1024)
++
++enum class ProfileType { None, Console, Bars };
++
++enum class OverdrawColorSet { Default = 0, Deuteranomaly };
++
++enum class RenderPipelineType { SkiaGL, SkiaVulkan, NotInitialized = 128 };
++
++enum class StretchEffectBehavior {
++    ShaderHWUI,   // Stretch shader in HWUI only, matrix scale in SF
++    Shader,       // Stretch shader in both HWUI and SF
++    UniformScale  // Uniform scale stretch everywhere
++};
++
++enum class DrawingEnabled { NotInitialized, On, Off };
++
++/**
++ * Renderthread-only singleton which manages several static rendering properties. Most of these
++ * are driven by system properties which are queried once at initialization, and again if init()
++ * is called.
++ */
++class Properties {
++public:
++    static bool load();
++
++    static bool debugLayersUpdates;
++    static bool debugOverdraw;
++    static bool debugTraceGpuResourceCategories;
++    static bool showDirtyRegions;
++    // TODO: Remove after stabilization period
++    static bool skipEmptyFrames;
++    static bool useBufferAge;
++    static bool enablePartialUpdates;
++    static bool enableRenderEffectCache;
++
++    // TODO: Move somewhere else?
++    static constexpr float textGamma = 1.45f;
++
++    static DebugLevel debugLevel;
++    static OverdrawColorSet overdrawColorSet;
++
++    // Override the value for a subset of properties in this class
++    static void overrideProperty(const char* name, const char* value);
++
++    static float overrideLightRadius;
++    static float overrideLightPosY;
++    static float overrideLightPosZ;
++    static float overrideAmbientRatio;
++    static int overrideAmbientShadowStrength;
++    static int overrideSpotShadowStrength;
++
++    static ProfileType getProfileType();
++    static RenderPipelineType peekRenderPipelineType();
++    static RenderPipelineType getRenderPipelineType();
++
++    static bool enableHighContrastText;
++
++    // Should be used only by test apps
++    static bool waitForGpuCompletion;
++    static bool forceDrawFrame;
++
++    // Should only be set by automated tests to try and filter out
++    // any overhead they add
++    static bool filterOutTestOverhead;
++
++    // Workaround a device lockup in edge cases by switching to async mode
++    // instead of the default vsync (b/38372997). Only system_server should hit this.
++    // Any existing RenderProxy & Surface combination will be unaffected, only things
++    // created after changing this.
++    static bool disableVsync;
++
++    static bool skpCaptureEnabled;
++
++    // For experimentation b/68769804
++    static bool enableRTAnimations;
++
++    // Used for testing only to change the render pipeline.
++    static void overrideRenderPipelineType(RenderPipelineType);
++
++    static bool runningInEmulator;
++
++    static bool debuggingEnabled;
++    static bool isolatedProcess;
++
++    static int contextPriority;
++
++    static float defaultSdrWhitePoint;
++
++    static bool useHintManager;
++    static int targetCpuTimePercentage;
++
++    static bool enableWebViewOverlays;
++
++    static bool isHighEndGfx;
++    static bool isLowRam;
++    static bool isSystemOrPersistent;
++
++    static float maxHdrHeadroomOn8bit;
++
++    static bool clipSurfaceViews;
++
++    static StretchEffectBehavior getStretchEffectBehavior() {
++        return stretchEffectBehavior;
++    }
++
++    static void setIsHighEndGfx(bool isHighEndGfx) {
++        Properties::isHighEndGfx = isHighEndGfx;
++        stretchEffectBehavior = isHighEndGfx ?
++            StretchEffectBehavior::ShaderHWUI :
++            StretchEffectBehavior::UniformScale;
++    }
++
++    static void setIsLowRam(bool isLowRam) { Properties::isLowRam = isLowRam; }
++
++    static void setIsSystemOrPersistent(bool isSystemOrPersistent) {
++        Properties::isSystemOrPersistent = isSystemOrPersistent;
++    }
++
++    /**
++     * Used for testing. Typical configuration of stretch behavior is done
++     * through setIsHighEndGfx
++     */
++    static void setStretchEffectBehavior(StretchEffectBehavior behavior) {
++        stretchEffectBehavior = behavior;
++    }
++
++    // Represents if drawing is enabled. Should only be Off in headless testing environments
++    static DrawingEnabled drawingEnabled;
++    static bool isDrawingEnabled();
++    static void setDrawingEnabled(bool enable);
++
++private:
++    static StretchEffectBehavior stretchEffectBehavior;
++    static ProfileType sProfileType;
++    static bool sDisableProfileBars;
++    static RenderPipelineType sRenderPipelineType;
++};  // class Caches
++
++}  // namespace uirenderer
++}  // namespace android
++
++#endif  // ANDROID_HWUI_PROPERTIES_H
+diff --git a/libs/hwui/renderthread/VulkanManager.cpp b/libs/hwui/renderthread/VulkanManager.cpp
+index d55d28d469d0..284c80a7bbdf 100644
+--- a/libs/hwui/renderthread/VulkanManager.cpp
++++ b/libs/hwui/renderthread/VulkanManager.cpp
+@@ -23,7 +23,6 @@
+ #include <GrDirectContext.h>
+ #include <GrTypes.h>
+ #include <android/sync.h>
+-#include <gui/TraceUtils.h>
+ #include <include/gpu/ganesh/SkSurfaceGanesh.h>
+ #include <include/gpu/ganesh/vk/GrVkBackendSurface.h>
+ #include <include/gpu/ganesh/vk/GrVkDirectContext.h>
+@@ -89,6 +88,19 @@ static void free_features_extensions_structs(const VkPhysicalDeviceFeatures2& fe
+     }
+ }
+ 
++GrVkGetProc VulkanManager::sSkiaGetProp = [](const char* proc_name, VkInstance instance,
++                                             VkDevice device) {
++    if (device != VK_NULL_HANDLE) {
++        if (strcmp("vkQueueSubmit", proc_name) == 0) {
++            return (PFN_vkVoidFunction)VulkanManager::interceptedVkQueueSubmit;
++        } else if (strcmp("vkQueueWaitIdle", proc_name) == 0) {
++            return (PFN_vkVoidFunction)VulkanManager::interceptedVkQueueWaitIdle;
++        }
++        return vkGetDeviceProcAddr(device, proc_name);
++    }
++    return vkGetInstanceProcAddr(instance, proc_name);
++};
++
+ #define GET_PROC(F) m##F = (PFN_vk##F)vkGetInstanceProcAddr(VK_NULL_HANDLE, "vk" #F)
+ #define GET_INST_PROC(F) m##F = (PFN_vk##F)vkGetInstanceProcAddr(mInstance, "vk" #F)
+ #define GET_DEV_PROC(F) m##F = (PFN_vk##F)vkGetDeviceProcAddr(mDevice, "vk" #F)
+@@ -124,7 +136,6 @@ VulkanManager::~VulkanManager() {
+     }
+ 
+     mGraphicsQueue = VK_NULL_HANDLE;
+-    mAHBUploadQueue = VK_NULL_HANDLE;
+     mDevice = VK_NULL_HANDLE;
+     mPhysicalDevice = VK_NULL_HANDLE;
+     mInstance = VK_NULL_HANDLE;
+@@ -218,7 +229,7 @@ void VulkanManager::setupDevice(GrVkExtensions& grExtensions, VkPhysicalDeviceFe
+     mDriverVersion = physDeviceProperties.driverVersion;
+ 
+     // query to get the initial queue props size
+-    uint32_t queueCount = 0;
++    uint32_t queueCount;
+     mGetPhysicalDeviceQueueFamilyProperties(mPhysicalDevice, &queueCount, nullptr);
+     LOG_ALWAYS_FATAL_IF(!queueCount);
+ 
+@@ -226,14 +237,11 @@ void VulkanManager::setupDevice(GrVkExtensions& grExtensions, VkPhysicalDeviceFe
+     std::unique_ptr<VkQueueFamilyProperties[]> queueProps(new VkQueueFamilyProperties[queueCount]);
+     mGetPhysicalDeviceQueueFamilyProperties(mPhysicalDevice, &queueCount, queueProps.get());
+ 
+-    constexpr auto kRequestedQueueCount = 2;
+-
+     // iterate to find the graphics queue
+     mGraphicsQueueIndex = queueCount;
+     for (uint32_t i = 0; i < queueCount; i++) {
+         if (queueProps[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+             mGraphicsQueueIndex = i;
+-            LOG_ALWAYS_FATAL_IF(queueProps[i].queueCount < kRequestedQueueCount);
+             break;
+         }
+     }
+@@ -263,14 +271,7 @@ void VulkanManager::setupDevice(GrVkExtensions& grExtensions, VkPhysicalDeviceFe
+         LOG_ALWAYS_FATAL_IF(!hasKHRSwapchainExtension);
+     }
+ 
+-    auto getProc = [](const char* proc_name, VkInstance instance, VkDevice device) {
+-        if (device != VK_NULL_HANDLE) {
+-            return vkGetDeviceProcAddr(device, proc_name);
+-        }
+-        return vkGetInstanceProcAddr(instance, proc_name);
+-    };
+-
+-    grExtensions.init(getProc, mInstance, mPhysicalDevice, mInstanceExtensions.size(),
++    grExtensions.init(sSkiaGetProp, mInstance, mPhysicalDevice, mInstanceExtensions.size(),
+                       mInstanceExtensions.data(), mDeviceExtensions.size(),
+                       mDeviceExtensions.data());
+ 
+@@ -309,7 +310,7 @@ void VulkanManager::setupDevice(GrVkExtensions& grExtensions, VkPhysicalDeviceFe
+     // and we can't depend on it on all platforms
+     features.features.robustBufferAccess = VK_FALSE;
+ 
+-    float queuePriorities[kRequestedQueueCount] = {0.0};
++    float queuePriorities[1] = {0.0};
+ 
+     void* queueNextPtr = nullptr;
+ 
+@@ -342,7 +343,7 @@ void VulkanManager::setupDevice(GrVkExtensions& grExtensions, VkPhysicalDeviceFe
+             queueNextPtr,                                // pNext
+             0,                                           // VkDeviceQueueCreateFlags
+             mGraphicsQueueIndex,                         // queueFamilyIndex
+-            kRequestedQueueCount,                        // queueCount
++            1,                                           // queueCount
+             queuePriorities,                             // pQueuePriorities
+     };
+ 
+@@ -395,7 +396,6 @@ void VulkanManager::initialize() {
+         this->setupDevice(mExtensions, mPhysicalDeviceFeatures2);
+ 
+         mGetDeviceQueue(mDevice, mGraphicsQueueIndex, 0, &mGraphicsQueue);
+-        mGetDeviceQueue(mDevice, mGraphicsQueueIndex, 1, &mAHBUploadQueue);
+ 
+         if (Properties::enablePartialUpdates && Properties::useBufferAge) {
+             mSwapBehavior = SwapBehavior::BufferAge;
+@@ -412,24 +412,16 @@ static void onGrContextReleased(void* context) {
+ 
+ sk_sp<GrDirectContext> VulkanManager::createContext(GrContextOptions& options,
+                                                     ContextType contextType) {
+-    auto getProc = [](const char* proc_name, VkInstance instance, VkDevice device) {
+-        if (device != VK_NULL_HANDLE) {
+-            return vkGetDeviceProcAddr(device, proc_name);
+-        }
+-        return vkGetInstanceProcAddr(instance, proc_name);
+-    };
+-
+     GrVkBackendContext backendContext;
+     backendContext.fInstance = mInstance;
+     backendContext.fPhysicalDevice = mPhysicalDevice;
+     backendContext.fDevice = mDevice;
+-    backendContext.fQueue =
+-            (contextType == ContextType::kRenderThread) ? mGraphicsQueue : mAHBUploadQueue;
++    backendContext.fQueue = mGraphicsQueue;
+     backendContext.fGraphicsQueueIndex = mGraphicsQueueIndex;
+     backendContext.fMaxAPIVersion = mAPIVersion;
+     backendContext.fVkExtensions = &mExtensions;
+     backendContext.fDeviceFeatures2 = &mPhysicalDeviceFeatures2;
+-    backendContext.fGetProc = std::move(getProc);
++    backendContext.fGetProc = sSkiaGetProp;
+ 
+     LOG_ALWAYS_FATAL_IF(options.fContextDeleteProc != nullptr, "Conflicting fContextDeleteProcs!");
+     this->incStrong((void*)onGrContextReleased);
+@@ -626,6 +618,7 @@ VulkanManager::VkDrawResult VulkanManager::finishFrame(SkSurface* surface) {
+         drawResult.presentFence.reset(fenceFd);
+     } else {
+         ALOGE("VulkanManager::finishFrame(): Semaphore submission failed");
++	std::lock_guard<std::mutex> lock(mGraphicsQueueMutex);
+         mQueueWaitIdle(mGraphicsQueue);
+     }
+ 
+@@ -647,6 +640,7 @@ void VulkanManager::swapBuffers(VulkanSurface* surface, const SkRect& dirtyRect,
+ void VulkanManager::destroySurface(VulkanSurface* surface) {
+     // Make sure all submit commands have finished before starting to destroy objects.
+     if (VK_NULL_HANDLE != mGraphicsQueue) {
++        std::lock_guard<std::mutex> lock(mGraphicsQueueMutex);
+         mQueueWaitIdle(mGraphicsQueue);
+     }
+ 
+diff --git a/libs/hwui/renderthread/VulkanManager.h b/libs/hwui/renderthread/VulkanManager.h
+index b92ebb3cdf71..4de84b51fe38 100644
+--- a/libs/hwui/renderthread/VulkanManager.h
++++ b/libs/hwui/renderthread/VulkanManager.h
+@@ -17,6 +17,10 @@
+ #ifndef VULKANMANAGER_H
+ #define VULKANMANAGER_H
+ 
++#include <functional>
++#include <mutex>
++
++#include "vulkan/vulkan_core.h"
+ #if !defined(VK_USE_PLATFORM_ANDROID_KHR)
+ #define VK_USE_PLATFORM_ANDROID_KHR
+ #endif
+@@ -190,8 +194,25 @@ private:
+     VkDevice mDevice = VK_NULL_HANDLE;
+ 
+     uint32_t mGraphicsQueueIndex;
++
++    std::mutex mGraphicsQueueMutex;
+     VkQueue mGraphicsQueue = VK_NULL_HANDLE;
+-    VkQueue mAHBUploadQueue = VK_NULL_HANDLE;
++
++    static VKAPI_ATTR VkResult interceptedVkQueueSubmit(VkQueue queue, uint32_t submitCount,
++                                                        const VkSubmitInfo* pSubmits,
++                                                        VkFence fence) {
++        sp<VulkanManager> manager = VulkanManager::getInstance();
++        std::lock_guard<std::mutex> lock(manager->mGraphicsQueueMutex);
++        return manager->mQueueSubmit(queue, submitCount, pSubmits, fence);
++    }
++
++    static VKAPI_ATTR VkResult interceptedVkQueueWaitIdle(VkQueue queue) {
++        sp<VulkanManager> manager = VulkanManager::getInstance();
++        std::lock_guard<std::mutex> lock(manager->mGraphicsQueueMutex);
++        return manager->mQueueWaitIdle(queue);
++    }
++
++    static GrVkGetProc sSkiaGetProp;
+ 
+     // Variables saved to populate VkFunctorInitParams.
+     static const uint32_t mAPIVersion = VK_MAKE_VERSION(1, 1, 0);
+diff --git a/libs/hwui/renderthread/VulkanManager.h.orig b/libs/hwui/renderthread/VulkanManager.h.orig
+new file mode 100644
+index 000000000000..b92ebb3cdf71
+--- /dev/null
++++ b/libs/hwui/renderthread/VulkanManager.h.orig
+@@ -0,0 +1,220 @@
++/*
++ * Copyright (C) 2016 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#ifndef VULKANMANAGER_H
++#define VULKANMANAGER_H
++
++#if !defined(VK_USE_PLATFORM_ANDROID_KHR)
++#define VK_USE_PLATFORM_ANDROID_KHR
++#endif
++#include <GrContextOptions.h>
++#include <SkSurface.h>
++#include <android-base/unique_fd.h>
++#include <utils/StrongPointer.h>
++#include <vk/GrVkBackendContext.h>
++#include <vk/GrVkExtensions.h>
++#include <vulkan/vulkan.h>
++
++// VK_ANDROID_frame_boundary is a bespoke extension defined by AGI
++// (https://github.com/google/agi) to enable profiling of apps rendering via
++// HWUI. This extension is not defined in Khronos, hence the need to declare it
++// manually here. There's a superseding extension (VK_EXT_frame_boundary) being
++// discussed in Khronos, but in the meantime we use the bespoke
++// VK_ANDROID_frame_boundary. This is a device extension that is implemented by
++// AGI's Vulkan capture layer, such that it is only supported by devices when
++// AGI is doing a capture of the app.
++//
++// TODO(b/182165045): use the Khronos blessed VK_EXT_frame_boudary once it has
++// landed in the spec.
++typedef void(VKAPI_PTR* PFN_vkFrameBoundaryANDROID)(VkDevice device, VkSemaphore semaphore,
++                                                    VkImage image);
++#define VK_ANDROID_FRAME_BOUNDARY_EXTENSION_NAME "VK_ANDROID_frame_boundary"
++
++#include "Frame.h"
++#include "IRenderPipeline.h"
++#include "VulkanSurface.h"
++#include "private/hwui/DrawVkInfo.h"
++
++#include <SkColorSpace.h>
++#include <SkRefCnt.h>
++
++namespace android {
++namespace uirenderer {
++namespace renderthread {
++
++class RenderThread;
++
++// This class contains the shared global Vulkan objects, such as VkInstance, VkDevice and VkQueue,
++// which are re-used by CanvasContext. This class is created once and should be used by all vulkan
++// windowing contexts. The VulkanManager must be initialized before use.
++class VulkanManager final : public RefBase {
++public:
++    static sp<VulkanManager> getInstance();
++    static sp<VulkanManager> peekInstance();
++
++    // Sets up the vulkan context that is shared amonst all clients of the VulkanManager. This must
++    // be call once before use of the VulkanManager. Multiple calls after the first will simiply
++    // return.
++    void initialize();
++
++    // Quick check to see if the VulkanManager has been initialized.
++    bool hasVkContext() { return mInitialized; }
++
++    // Create and destroy functions for wrapping an ANativeWindow in a VulkanSurface
++    VulkanSurface* createSurface(ANativeWindow* window,
++                                 ColorMode colorMode,
++                                 sk_sp<SkColorSpace> surfaceColorSpace,
++                                 SkColorType surfaceColorType,
++                                 GrDirectContext* grContext,
++                                 uint32_t extraBuffers);
++    void destroySurface(VulkanSurface* surface);
++
++    Frame dequeueNextBuffer(VulkanSurface* surface);
++
++    struct VkDrawResult {
++        // The estimated start time for intiating GPU work, -1 if unknown.
++        nsecs_t submissionTime;
++        android::base::unique_fd presentFence;
++    };
++
++    // Finishes the frame and submits work to the GPU
++    VkDrawResult finishFrame(SkSurface* surface);
++    void swapBuffers(VulkanSurface* surface, const SkRect& dirtyRect,
++                     android::base::unique_fd&& presentFence);
++
++    // Inserts a wait on fence command into the Vulkan command buffer.
++    status_t fenceWait(int fence, GrDirectContext* grContext);
++
++    // Creates a fence that is signaled when all the pending Vulkan commands are finished on the
++    // GPU.
++    status_t createReleaseFence(int* nativeFence, GrDirectContext* grContext);
++
++    // Returned pointers are owned by VulkanManager.
++    // An instance of VkFunctorInitParams returned from getVkFunctorInitParams refers to
++    // the internal state of VulkanManager: VulkanManager must be alive to use the returned value.
++    VkFunctorInitParams getVkFunctorInitParams() const;
++
++
++    enum class ContextType {
++        kRenderThread,
++        kUploadThread
++    };
++
++    // returns a Skia graphic context used to draw content on the specified thread
++    sk_sp<GrDirectContext> createContext(GrContextOptions& options,
++                                         ContextType contextType = ContextType::kRenderThread);
++
++    uint32_t getDriverVersion() const { return mDriverVersion; }
++
++private:
++    friend class VulkanSurface;
++
++    explicit VulkanManager() {}
++    ~VulkanManager();
++
++    // Sets up the VkInstance and VkDevice objects. Also fills out the passed in
++    // VkPhysicalDeviceFeatures struct.
++    void setupDevice(GrVkExtensions&, VkPhysicalDeviceFeatures2&);
++
++    // simple wrapper class that exists only to initialize a pointer to NULL
++    template <typename FNPTR_TYPE>
++    class VkPtr {
++    public:
++        VkPtr() : fPtr(NULL) {}
++        VkPtr operator=(FNPTR_TYPE ptr) {
++            fPtr = ptr;
++            return *this;
++        }
++        // NOLINTNEXTLINE(google-explicit-constructor)
++        operator FNPTR_TYPE() const { return fPtr; }
++
++    private:
++        FNPTR_TYPE fPtr;
++    };
++
++    // Instance Functions
++    VkPtr<PFN_vkEnumerateInstanceVersion> mEnumerateInstanceVersion;
++    VkPtr<PFN_vkEnumerateInstanceExtensionProperties> mEnumerateInstanceExtensionProperties;
++    VkPtr<PFN_vkCreateInstance> mCreateInstance;
++
++    VkPtr<PFN_vkDestroyInstance> mDestroyInstance;
++    VkPtr<PFN_vkEnumeratePhysicalDevices> mEnumeratePhysicalDevices;
++    VkPtr<PFN_vkGetPhysicalDeviceProperties> mGetPhysicalDeviceProperties;
++    VkPtr<PFN_vkGetPhysicalDeviceQueueFamilyProperties> mGetPhysicalDeviceQueueFamilyProperties;
++    VkPtr<PFN_vkGetPhysicalDeviceFeatures2> mGetPhysicalDeviceFeatures2;
++    VkPtr<PFN_vkGetPhysicalDeviceImageFormatProperties2> mGetPhysicalDeviceImageFormatProperties2;
++    VkPtr<PFN_vkCreateDevice> mCreateDevice;
++    VkPtr<PFN_vkEnumerateDeviceExtensionProperties> mEnumerateDeviceExtensionProperties;
++
++    // Device Functions
++    VkPtr<PFN_vkGetDeviceQueue> mGetDeviceQueue;
++    VkPtr<PFN_vkDeviceWaitIdle> mDeviceWaitIdle;
++    VkPtr<PFN_vkDestroyDevice> mDestroyDevice;
++    VkPtr<PFN_vkCreateCommandPool> mCreateCommandPool;
++    VkPtr<PFN_vkDestroyCommandPool> mDestroyCommandPool;
++    VkPtr<PFN_vkAllocateCommandBuffers> mAllocateCommandBuffers;
++    VkPtr<PFN_vkFreeCommandBuffers> mFreeCommandBuffers;
++    VkPtr<PFN_vkResetCommandBuffer> mResetCommandBuffer;
++    VkPtr<PFN_vkBeginCommandBuffer> mBeginCommandBuffer;
++    VkPtr<PFN_vkEndCommandBuffer> mEndCommandBuffer;
++    VkPtr<PFN_vkCmdPipelineBarrier> mCmdPipelineBarrier;
++
++    VkPtr<PFN_vkQueueSubmit> mQueueSubmit;
++    VkPtr<PFN_vkQueueWaitIdle> mQueueWaitIdle;
++
++    VkPtr<PFN_vkCreateSemaphore> mCreateSemaphore;
++    VkPtr<PFN_vkDestroySemaphore> mDestroySemaphore;
++    VkPtr<PFN_vkImportSemaphoreFdKHR> mImportSemaphoreFdKHR;
++    VkPtr<PFN_vkGetSemaphoreFdKHR> mGetSemaphoreFdKHR;
++    VkPtr<PFN_vkCreateFence> mCreateFence;
++    VkPtr<PFN_vkDestroyFence> mDestroyFence;
++    VkPtr<PFN_vkWaitForFences> mWaitForFences;
++    VkPtr<PFN_vkResetFences> mResetFences;
++    VkPtr<PFN_vkFrameBoundaryANDROID> mFrameBoundaryANDROID;
++
++    VkInstance mInstance = VK_NULL_HANDLE;
++    VkPhysicalDevice mPhysicalDevice = VK_NULL_HANDLE;
++    VkDevice mDevice = VK_NULL_HANDLE;
++
++    uint32_t mGraphicsQueueIndex;
++    VkQueue mGraphicsQueue = VK_NULL_HANDLE;
++    VkQueue mAHBUploadQueue = VK_NULL_HANDLE;
++
++    // Variables saved to populate VkFunctorInitParams.
++    static const uint32_t mAPIVersion = VK_MAKE_VERSION(1, 1, 0);
++    std::vector<VkExtensionProperties> mInstanceExtensionsOwner;
++    std::vector<const char*> mInstanceExtensions;
++    std::vector<VkExtensionProperties> mDeviceExtensionsOwner;
++    std::vector<const char*> mDeviceExtensions;
++    VkPhysicalDeviceFeatures2 mPhysicalDeviceFeatures2{};
++
++    enum class SwapBehavior {
++        Discard,
++        BufferAge,
++    };
++    SwapBehavior mSwapBehavior = SwapBehavior::Discard;
++    GrVkExtensions mExtensions;
++    uint32_t mDriverVersion = 0;
++
++    std::once_flag mInitFlag;
++    std::atomic_bool mInitialized = false;
++};
++
++} /* namespace renderthread */
++} /* namespace uirenderer */
++} /* namespace android */
++
++#endif /* VULKANMANAGER_H */
+diff --git a/libs/hwui/tests/common/TestUtils.h b/libs/hwui/tests/common/TestUtils.h
+index 0ede902b1b95..25e08b4d17d5 100644
+--- a/libs/hwui/tests/common/TestUtils.h
++++ b/libs/hwui/tests/common/TestUtils.h
+@@ -77,8 +77,7 @@ namespace uirenderer {
+         static void doTheThing(renderthread::RenderThread& renderThread);                   \
+     };                                                                                      \
+     INNER_PIPELINE_RENDERTHREAD_TEST(test_case_name, test_name);                            \
+-    /* Temporarily disabling Vulkan until we can figure out a way to stub out the driver */ \
+-    /* INNER_PIPELINE_RENDERTHREAD_TEST(test_case_name, test_name, SkiaVulkan); */          \
++    INNER_PIPELINE_RENDERTHREAD_TEST(test_case_name, test_name, SkiaVulkan); 	            \
+     void test_case_name##_##test_name##_RenderThreadTest::doTheThing(                       \
+             renderthread::RenderThread& renderThread)
+ 
+-- 
+2.34.1
+

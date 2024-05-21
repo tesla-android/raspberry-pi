@@ -1,0 +1,35 @@
+From 38844ad270d84878b7004aa6a420c0e755a70b16 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Micha=C5=82=20Gapi=C5=84ski?= <mike@gapinski.eu>
+Date: Thu, 23 May 2024 18:42:42 +0000
+Subject: [PATCH 6/6] Fix Vulkan build
+
+Change-Id: I4b2b5ec796ea732bbbcf097e39928549ab7ff6c5
+---
+ libs/hwui/renderthread/VulkanManager.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/libs/hwui/renderthread/VulkanManager.cpp b/libs/hwui/renderthread/VulkanManager.cpp
+index 284c80a7bbdf..dda48c048fa9 100644
+--- a/libs/hwui/renderthread/VulkanManager.cpp
++++ b/libs/hwui/renderthread/VulkanManager.cpp
+@@ -548,7 +548,7 @@ static void destroy_semaphore(void* context) {
+ }
+ 
+ VulkanManager::VkDrawResult VulkanManager::finishFrame(SkSurface* surface) {
+-    ATRACE_NAME("Vulkan finish frame");
++    //ATRACE_NAME("Vulkan finish frame");
+ 
+     sp<SharedSemaphoreInfo> sharedSemaphore;
+     GrFlushInfo flushInfo;
+@@ -630,7 +630,7 @@ VulkanManager::VkDrawResult VulkanManager::finishFrame(SkSurface* surface) {
+ void VulkanManager::swapBuffers(VulkanSurface* surface, const SkRect& dirtyRect,
+                                 android::base::unique_fd&& presentFence) {
+     if (CC_UNLIKELY(Properties::waitForGpuCompletion)) {
+-        ATRACE_NAME("Finishing GPU work");
++        //ATRACE_NAME("Finishing GPU work");
+         mDeviceWaitIdle(mDevice);
+     }
+ 
+-- 
+2.34.1
+

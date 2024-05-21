@@ -88,7 +88,7 @@ pipeline {
         stage('Unfold AOSP repo') {
             steps {
                 dir("${BASE_PATH}/merged") {
-                    sh './unfold_aosp.sh'
+                    sh './unfold_lineageos.sh'
                 }
             }
         }

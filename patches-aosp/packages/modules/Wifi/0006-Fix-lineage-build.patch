@@ -1,0 +1,52 @@
+From 5ac2fc4552277a85055d8fa6d83f811db4a6b45b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Micha=C5=82=20Gapi=C5=84ski?= <mike@gapinski.eu>
+Date: Thu, 23 May 2024 18:37:44 +0000
+Subject: [PATCH 6/6] Fix lineage build
+
+Change-Id: I6380c2f39d9a778b80cc9d0ac8df4d82eba7ed38
+---
+ framework/api/current.txt       |  6 ++++++
+ framework/api/lint-baseline.txt | 10 ++++++++++
+ 2 files changed, 16 insertions(+)
+
+diff --git a/framework/api/current.txt b/framework/api/current.txt
+index 40d2765497..038922b3d7 100644
+--- a/framework/api/current.txt
++++ b/framework/api/current.txt
+@@ -140,6 +140,12 @@ package android.net.wifi {
+     enum_constant public static final android.net.wifi.SupplicantState UNINITIALIZED;
+   }
+ 
++  public class TeslaAndroidSoftApConfiguration {
++    method public static int getSoftApBandType();
++    method public static int getSoftApChannel();
++    method public static int getSoftApChannelWidth();
++  }
++
+   public final class WifiAvailableChannel implements android.os.Parcelable {
+     ctor public WifiAvailableChannel(int, int);
+     method public int describeContents();
+diff --git a/framework/api/lint-baseline.txt b/framework/api/lint-baseline.txt
+index d03e182401..f0d0238e0f 100644
+--- a/framework/api/lint-baseline.txt
++++ b/framework/api/lint-baseline.txt
+@@ -81,6 +81,16 @@ RequiresPermission: android.net.wifi.rtt.WifiRttManager#startRanging(android.net
+     Method 'startRanging' documentation mentions permissions already declared by @RequiresPermission
+ 
+ 
++UnflaggedApi: android.net.wifi.TeslaAndroidSoftApConfiguration:
++    New API must be flagged with @FlaggedApi: class android.net.wifi.TeslaAndroidSoftApConfiguration
++UnflaggedApi: android.net.wifi.TeslaAndroidSoftApConfiguration#getSoftApBandType():
++    New API must be flagged with @FlaggedApi: method android.net.wifi.TeslaAndroidSoftApConfiguration.getSoftApBandType()
++UnflaggedApi: android.net.wifi.TeslaAndroidSoftApConfiguration#getSoftApChannel():
++    New API must be flagged with @FlaggedApi: method android.net.wifi.TeslaAndroidSoftApConfiguration.getSoftApChannel()
++UnflaggedApi: android.net.wifi.TeslaAndroidSoftApConfiguration#getSoftApChannelWidth():
++    New API must be flagged with @FlaggedApi: method android.net.wifi.TeslaAndroidSoftApConfiguration.getSoftApChannelWidth()
++
++
+ VisiblySynchronized: PsiThisExpression:
+     Internal locks must not be exposed (synchronizing on this or class is still externally observable): method android.net.wifi.WifiManager.WifiLock.finalize()
+ VisiblySynchronized: android.net.wifi.WifiManager.WifiLock#finalize():
+-- 
+2.34.1
+
